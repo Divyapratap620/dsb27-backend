@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: dsb27-backend
+    runtime: node
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATA_DIR
+        value: /tmp/dsb27-data
+      - key: GROQ_API_KEY
+        sync: false        # ← Set this manually in Render dashboard → Environment
+      - key: ALLOWED_ORIGIN
+        sync: false        # ← Set to your front-end URL or *
+      - key: SELF_URL
+        sync: false        # ← Set to https://dsb27-backend.onrender.com (your own URL)
