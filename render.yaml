@@ -11,11 +11,16 @@ services:
         value: production
       - key: PORT
         value: 10000
-      - key: DATA_DIR
-        value: /tmp/dsb27-data
       - key: GROQ_API_KEY
-        sync: false        # ← Set this manually in Render dashboard → Environment
+        sync: false
+      - key: DATABASE_URL
+        sync: false
       - key: ALLOWED_ORIGIN
-        sync: false        # ← Set to your front-end URL or *
+        sync: false
       - key: SELF_URL
-        sync: false        # ← Set to https://dsb27-backend.onrender.com (your own URL)
+        sync: false
+
+databases:
+  - name: dsb27-db
+    databaseName: dsb27
+    user: dsb27

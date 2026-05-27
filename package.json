@@ -1,21 +1,19 @@
 {
   "name": "dsb27-backend",
-  "version": "4.0.0",
-  "description": "DSB-27-ALPHA · Operation Silent Domination — Backend Server",
+  "version": "5.0.0",
+  "description": "DSB-27-ALPHA · Backend with PostgreSQL",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  },
+  "engines": { "node": ">=18.0.0" },
   "dependencies": {
     "compression": "^1.7.4",
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "express-rate-limit": "^7.1.5"
+    "express-rate-limit": "^7.1.5",
+    "pg": "^8.11.3"
   },
-  "keywords": ["dsb27", "jee", "neet", "study", "dashboard"],
   "license": "MIT"
 }
