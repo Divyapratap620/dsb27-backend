@@ -22,6 +22,8 @@ const compression = require('compression');
 const { Pool }   = require('pg');
 const https      = require('https');
 const http       = require('http');
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -338,6 +340,138 @@ app.use((err, req, res, _next) => {
 //  START
 // ════════════════════════════════════════════════════════════════
 initDB().then(() => {
+  // ═══════════════════════════════════════════════════════════════
+//  DSB-27 OTP Routes — paste this into your Express server
+//  Uses Resend.com (free: 3000 emails/month, no credit card)
+//
+//  SETUP:
+//  1. npm install resend
+//  2. Set env var:  RESEND_API_KEY=re_xxxxxxxxxxxxxxxx
+//     (get it from https://resend.com → API Keys)
+//  3. In Resend dashboard → Domains → verify your domain
+//     OR use Resend's free sandbox: onboarding@resend.dev (sends to your own email only)
+//  4. Paste these routes into your server before app.listen()
+// ═══════════════════════════════════════════════════════════════
+
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+// In-memory OTP store  (for production, swap with Redis or your DB)
+// Structure: { [token]: { email, code, expires } }
+const otpStore = new Map();
+
+function genOtp() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+function genToken() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+function cleanupExpired() {
+  const now = Date.now();
+  for (const [token, rec] of otpStore) {
+    if (rec.expires < now) otpStore.delete(token);
+  }
+}
+
+// ── POST /api/send-otp ────────────────────────────────────────
+// Body: { email: string }
+// Returns: { success: true, token: string }
+async function sendOtpHandler(req, res) {
+  const { email } = req.body || {};
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Invalid email address' });
+  }
+
+  // Rate limit: max 3 OTPs per email per 10 minutes
+  cleanupExpired();
+  const recentCount = [...otpStore.values()].filter(
+    r => r.email === email.toLowerCase() && r.expires > Date.now()
+  ).length;
+  if (recentCount >= 3) {
+    return res.status(429).json({ error: 'Too many requests. Wait a few minutes.' });
+  }
+
+  const code  = genOtp();
+  const token = genToken();
+  const expires = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+  otpStore.set(token, { email: email.toLowerCase(), code, expires });
+
+  try {
+    await resend.emails.send({
+      from   : 'DSB-27 <otp@yourdomain.com>',   // ← change to your verified Resend domain
+      // For sandbox testing use: 'onboarding@resend.dev'
+      to     : [email],
+      subject: 'Your DSB-27 Verification Code',
+      html   : `
+        <div style="font-family:monospace;background:#05070f;color:#e0e8ff;padding:32px;border-radius:16px;max-width:480px;margin:0 auto">
+          <div style="font-size:11px;letter-spacing:.2em;color:#5a78ff;margin-bottom:8px">DSB · COMMAND CENTER · SECURE ACCESS</div>
+          <div style="font-size:28px;font-weight:900;letter-spacing:.05em;margin-bottom:24px">DSB&#8209;27 ALPHA</div>
+          <div style="font-size:13px;color:#8a96c0;margin-bottom:20px;line-height:1.6">
+            Your one-time verification code is:
+          </div>
+          <div style="font-size:48px;font-weight:900;letter-spacing:.18em;color:#00eeff;text-align:center;
+                      background:#0d1120;border:1px solid rgba(0,238,255,0.25);border-radius:12px;
+                      padding:16px;margin-bottom:20px;text-shadow:0 0 24px rgba(0,238,255,0.5)">
+            ${code}
+          </div>
+          <div style="font-size:11px;color:#4a5580;line-height:1.7">
+            This code expires in <strong style="color:#8a96c0">10 minutes</strong>.<br>
+            If you didn't request this, you can safely ignore it.
+          </div>
+        </div>
+      `,
+    });
+  } catch (err) {
+    console.error('[DSB27 OTP] Resend error:', err);
+    return res.status(500).json({ error: 'Failed to send email. Try again.' });
+  }
+
+  return res.json({ success: true, token });
+}
+
+// ── POST /api/verify-otp ──────────────────────────────────────
+// Body: { email: string, code: string, token: string }
+// Returns: { valid: true } or 400 { error, valid: false }
+function verifyOtpHandler(req, res) {
+  const { email, code, token } = req.body || {};
+
+  if (!email || !code || !token) {
+    return res.status(400).json({ valid: false, error: 'Missing fields' });
+  }
+
+  const rec = otpStore.get(token);
+
+  if (!rec) {
+    return res.status(400).json({ valid: false, error: 'Code expired or invalid. Request a new one.' });
+  }
+  if (rec.expires < Date.now()) {
+    otpStore.delete(token);
+    return res.status(400).json({ valid: false, error: 'Code has expired. Please request a new one.' });
+  }
+  if (rec.email !== email.toLowerCase() || rec.code !== code) {
+    return res.status(400).json({ valid: false, error: 'Incorrect code. Please try again.' });
+  }
+
+  // ✓ Valid — delete so it can't be reused
+  otpStore.delete(token);
+  return res.json({ valid: true });
+}
+
+// ── Mount routes ──────────────────────────────────────────────
+// Call this function with your Express `app` instance:
+//
+//   const { mountOtpRoutes } = require('./otp-routes');
+//   mountOtpRoutes(app);
+//
+function mountOtpRoutes(app) {
+  app.post('/api/send-otp',   sendOtpHandler);
+  app.post('/api/verify-otp', verifyOtpHandler);
+  console.log('[DSB27] OTP routes mounted: POST /api/send-otp, POST /api/verify-otp');
+}
+
+module.exports = { mountOtpRoutes, sendOtpHandler, verifyOtpHandler };
   app.listen(PORT, () => {
     console.log(`\n⚡  DSB-27 Backend v${VERSION}  →  http://localhost:${PORT}`);
     console.log(`   GROQ_API_KEY  : ${GROQ_KEY ? '✅ (' + GROQ_KEY.slice(0,8) + '…)' : '❌ NOT SET'}`);
